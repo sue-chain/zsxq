@@ -1,4 +1,5 @@
-# -*- coding:utf-8 -*-
+#
+-*- coding:utf-8 -*-
 
 import os
 import time
@@ -63,9 +64,8 @@ class BaseSpider(object):
         self.token = ""
         self.topics = []
         self.comments = []
-        self.current_spider_time = None
-        self.current_end_time = None    # topic列表(20条)中时间最早的topic，取下20条topic的end_time参数
-        self.sotp_spider_time= arrow.get("2018-01-22")      # 定义爬取最早的记录时间，防止无限获取
+        self.pre_end_time = None    # topic列表(20条)中时间最早的topic create_time，取下20条topic的end_time参数
+        self.stop_spider_time= arrow.get("2018-01-22")      # 定义爬取最早的记录时间，防止无限获取
         # 前一次爬取时间
         self.pre_spider_time = None 
         # 停止爬取时间，防止无限获取
@@ -123,9 +123,9 @@ class BaseSpider(object):
         """
         try:
             group_id = "" 
-            self.pre_spider_time = self.get_cache_pre_spider_time()
+            self.pre_end_time = self.get_cache_pre_end_time()
             while 1:
-                topic_list = self.get_topic_list(group_id, self.pre_spider_time)
+                topic_list = self.get_topic_list(group_id, self.pre_end_time)
                 if not topic_list:
                     raise StopSpiderError("没有帖子，停止抓取")
 
@@ -256,16 +256,16 @@ class BaseSpider(object):
         with open("token.txt", "rb") as fd:
             self.token = json.loads(fd.read())["token"]
 
-    def cache_end_time(self):
+    def cache_pre_end_time(self):
         """cache cookie"""
         if not self.current_end_time:
             return
         with open("end_time.txt", "wb") as fd:
-            fd.write(json.dumps({"end_time": self.current_end_time}))
+            fd.write(json.dumps({"end_time": self.pre_end_time}))
 
-    def get_cache_pre_spider_time(self):
+    def get_cache_pre_end_time(self):
         """cache cookie"""
-        file_path = "data/pre_spider_time.txt"
+        file_path = "data/end_time.txt"
 
         if not os.path.exists(file_path):
             return
