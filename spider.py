@@ -1,5 +1,4 @@
-#
--*- coding:utf-8 -*-
+#-*- coding:utf-8 -*-
 
 import os
 import time
@@ -18,6 +17,8 @@ class SleepError(Exception):
     """睡眠"""
     pass
 
+class NotGroupId(Exception):
+    pass
 
 class StopSpiderError(Exception):
     """停止抓取"""
@@ -31,23 +32,6 @@ class Topic(object):
 
     pass
 
-class FullSpider(object):
-    """全部抓取
-    """
-    def check_continue_spider(self, topic):
-        """检测是否继续抓取
-        """
-        if arrow.get(topic["create_time"]) > self.stop_spider_time:
-            raise Exception("")
-
-class DailySpider(BaseSpider):
-    """日常抓取
-    """
-    def check_continue_spider(self, topic):
-        """检测是否继续抓取
-        """
-        if arrow.get(topic["create_time"]) > self.stop_spider_time:
-            raise Exception("")
 
 class BaseSpider(object):
 
@@ -67,9 +51,10 @@ class BaseSpider(object):
         self.pre_end_time = None    # topic列表(20条)中时间最早的topic create_time，取下20条topic的end_time参数
         self.stop_spider_time= arrow.get("2018-01-22")      # 定义爬取最早的记录时间，防止无限获取
         # 前一次爬取时间
-        self.pre_spider_time = None 
         # 停止爬取时间，防止无限获取
-        self.stop_spider_time = stop_spider_time
+        self.stop_spider_time = kwargs.get("stop_spider_time")
+        self.group_id  = kwargs.get("group_id")
+        self.base_data_path = "data"
 
     def execute(self):
         """execute spider"""
@@ -80,8 +65,6 @@ class BaseSpider(object):
         except KeyboardInterrupt as error:
             self.cache_topics()
         except Exception as error:
-            import pdb
-            pdb.set_trace()
             pass
 
 
@@ -122,10 +105,10 @@ class BaseSpider(object):
         """begin spider
         """
         try:
-            group_id = "" 
-            self.pre_end_time = self.get_cache_pre_end_time()
+            if not group_id:
+                raise NotGroupId("缺少group_id")
             while 1:
-                topic_list = self.get_topic_list(group_id, self.pre_end_time)
+                topic_list = self.get_topic_list(self.group_id, self.pre_end_time)
                 if not topic_list:
                     raise StopSpiderError("没有帖子，停止抓取")
 
@@ -212,9 +195,6 @@ class BaseSpider(object):
 
         return result_json["resp_data"]["topics"]
 
-    def get_comments(self, topic_json):
-        """get topic comment"""
-
     def get_comment_list(self, topic):
         """获取评论list"""
         params = {}
@@ -239,6 +219,27 @@ class BaseSpider(object):
             raise LoginTimeOut("请重新登录")
 
         return result_json["resp_data"]["comments"]
+
+    def download_file(self, topic):
+        """下载帖子中的文件"""
+        images = topic.get("talk", {}).get("images", {})
+        base_path = "{}/image".format(self.base_data_path)
+        if not images:
+            return
+        for image in images:
+            try:
+                image_file = "{}/{}".format(base_path, image["thumbnail"].split(".")[-1])
+                resp = requests.get("thumbnail")
+                if resp.status_code == 200:
+                    with open(image_file, "wb") as fd:
+                        fd.write(resp.content)
+            except Exception as errro:
+                continue
+
+
+        
+
+
         
     def cache_token(self):
         """cache cookie"""
@@ -256,42 +257,66 @@ class BaseSpider(object):
         with open("token.txt", "rb") as fd:
             self.token = json.loads(fd.read())["token"]
 
-    def cache_pre_end_time(self):
+    def cache_params(self):
         """cache cookie"""
-        if not self.current_end_time:
-            return
-        with open("end_time.txt", "wb") as fd:
-            fd.write(json.dumps({"end_time": self.pre_end_time}))
 
-    def get_cache_pre_end_time(self):
+        file_path = "data/full_params.json"
+
+        data = {
+            "pre_end_time": self.pre_end_time,
+            "stop_spider_time": self.stop_spider_time,
+            "group_id": self.group_id
+        }
+
+        with open(file_path, "wb") as fd:
+            fd.write(json.dumps(data))
+
+    def get_cache_params(self):
         """cache cookie"""
-        file_path = "data/end_time.txt"
 
+        file_path = "data/full_params.json"
         if not os.path.exists(file_path):
-            return
+            return {}
 
         with open(file_path, "rb") as fd:
-            return json.loads(fd.read())["end_time"]
+            return json.loads(fd.read())
 
     def cache_topics(self):
-        """cache topics"""
+        """cache topics
+
+        按月份目录存储，文件名使用topic开始时间到结束时间
+        """
         if not self.topics:
             return
-        begin_topic_id = self.topics[0]["topic_id"]
-        end_topic_id = self.topics[-1]["topic_id"]
+
+        directory = "{}/{}".format(self.base_data_path, arrow.now().format("YYYY-MM"))
+        if os.path.exists(directory):
+            os.makedirs(directory)
+
+        begin_time = arrow.get(self.topics[0]["crate_time"]).format("YYYYMMMDDHHmm")
+        end_time = arrow.get(self.topics[-1]["crate_time"]).format("YYYYMMMDDHHmm")
+        file_path = "{}/topic_{}_{}.txt".format(directory, begin_time, end_time)
+        if os.path.exists(file_path):
+            file_path = "{}/topic_{}_{}_{}.txt".format(directory, begin_time, end_time, random.randint(1-100))
         
-        with open("topic_{}_{}.txt".format(begin_topic_id, end_topic_id), "wb") as fd:
+        with open(file_path, "wb") as fd:
             fd.write(json.dumps(self.topics))
             self.topics = []
 
-        self.cache_comments(begin_topic_id, end_topic_id)
+        self.cache_comments(begin_time, end_time)
 
-    def cache_comments(self, begin_topic_id, end_topic_id):
+    def cache_comments(self, begin_time, end_time):
         """cache topics"""
         if not self.comments:
             return
 
-        with open("comments_{}_{}.txt".format(begin_topic_id, end_topic_id), "wb") as fd:
+        directory = "{}/{}".format(self.base_data_path, arrow.now().format("YYYY-MM"))
+
+        file_path = "{}/comment_{}_{}.txt".format(directory, begin_time, end_time)
+        if os.path.exists(file_path):
+            file_path = "{}/comment_{}_{}_{}.txt".format(directory, begin_time, end_time, random.randint(1-100))
+
+        with open(file_path, "wb") as fd:
             fd.write(json.dumps(self.comments))
             self.comments= []
 
@@ -302,3 +327,22 @@ class BaseSpider(object):
         if arrow.get(topic["create_time"]) > self.stop_spider_time:
             raise StopSpiderError("停止抓取")
         
+
+
+class FullSpider(BaseSpider):
+    """全部抓取
+    """
+    def check_continue_spider(self, topic):
+        """检测是否继续抓取
+        """
+        if arrow.get(topic["create_time"]) > self.stop_spider_time:
+            raise Exception("")
+
+class DailySpider(BaseSpider):
+    """日常抓取
+    """
+    def check_continue_spider(self, topic):
+        """检测是否继续抓取
+        """
+        if arrow.get(topic["create_time"]) > self.stop_spider_time:
+            raise Exception("")
