@@ -13,7 +13,7 @@ import arrow
 
 from selenium import webdriver
 
-class SleepError(Exception):
+class Sleep(Exception):
     """睡眠"""
     pass
 
@@ -61,11 +61,16 @@ class BaseSpider(object):
         try:
             self.init_browser()
             self.login_and_init_token()
-            self.begin_get_topic()
+            self.begin_spider()
         except KeyboardInterrupt as error:
-            self.cache_topics()
+            pass
+        except Sleep as error:
+            raise error
         except Exception as error:
             pass
+        finally:
+            self.cache_topics()
+            self.cache_params()
 
 
     def init_browser(self):
@@ -104,42 +109,31 @@ class BaseSpider(object):
     def begin_spider(self):
         """begin spider
         """
-        try:
-            if not group_id:
-                raise NotGroupId("缺少group_id")
-            while 1:
-                topic_list = self.get_topic_list(self.group_id, self.pre_end_time)
-                if not topic_list:
-                    raise StopSpiderError("没有帖子，停止抓取")
+        if not group_id:
+            raise NotGroupId("缺少group_id")
+        while 1:
+            topic_list = self.get_topic_list(self.group_id, self.pre_end_time)
+            if not topic_list:
+                raise StopSpiderError("没有帖子，停止抓取")
 
-                # 检查topic_list时间最早的一条
-                self.check_continue_spider(topic_list[-1])
+            # 检查topic_list时间最早的一条
+            self.check_continue_spider(topic_list[-1])
 
-                self.topics.extend(topic_list)
+            self.topics.extend(topic_list)
 
-                for topic in topi_list:
-                    if topic["comments_count"] > len(topic["show_comments"]):
-                        self.comments.extend(self.get_comment_list(topic))
-                    else:
-                        self.comments.extend(topic["show_comments"])
+            for topic in topi_list:
+                if topic["comments_count"] > len(topic["show_comments"]):
+                    self.comments.extend(self.get_comment_list(topic))
+                else:
+                    self.comments.extend(topic["show_comments"])
 
-                # 每1000条保存一次，防止数据过多崩溃
-                if len(self.topics) % 1000 == 0:
-                    self.cache_topics()
-                
-                self.pre_spider_time = topic_list[-1]["create_time"]
-                
-                time.sleep(2)
-        except KeyboardInterrupt as error:
-            pass
-        except Exception as error:
-            #self.login_and_init_token()
-            #logging.error("异常结束", exc_info=True)
-            #self.get_new_topics(group_id, self.current_end_time)
-            raise error
-        finally:
-            self.cache_topics()
-            self.cache_end_time()
+            # 每1000条保存一次，防止数据过多崩溃
+            if len(self.topics) % 1000 == 0:
+                self.cache_topics()
+            
+            self.pre_spider_time = topic_list[-1]["create_time"]
+            
+            time.sleep(2)
 
 
     def get_topics_list(self, group_id=None, end_time=None):
@@ -295,9 +289,14 @@ class BaseSpider(object):
 
         begin_time = arrow.get(self.topics[0]["crate_time"]).format("YYYYMMMDDHHmm")
         end_time = arrow.get(self.topics[-1]["crate_time"]).format("YYYYMMMDDHHmm")
-        file_path = "{}/topic_{}_{}.txt".format(directory, begin_time, end_time)
+        file_path = "{}/topic/{}_{}.txt".format(directory, begin_time, end_time)
         if os.path.exists(file_path):
-            file_path = "{}/topic_{}_{}_{}.txt".format(directory, begin_time, end_time, random.randint(1-100))
+            file_path = "{}/topic/{}_{}_{}.txt".format(
+                directory,
+                begin_time,
+                end_time,
+                arrow.now().timestamp
+            )
         
         with open(file_path, "wb") as fd:
             fd.write(json.dumps(self.topics))
@@ -312,9 +311,14 @@ class BaseSpider(object):
 
         directory = "{}/{}".format(self.base_data_path, arrow.now().format("YYYY-MM"))
 
-        file_path = "{}/comment_{}_{}.txt".format(directory, begin_time, end_time)
+        file_path = "{}/comment/{}_{}.txt".format(directory, begin_time, end_time)
         if os.path.exists(file_path):
-            file_path = "{}/comment_{}_{}_{}.txt".format(directory, begin_time, end_time, random.randint(1-100))
+            file_path = "{}/comment/{}_{}_{}.txt".format(
+                directory,
+                begin_time,
+                end_time,
+                arrow.now().timestamp
+            )
 
         with open(file_path, "wb") as fd:
             fd.write(json.dumps(self.comments))
@@ -323,9 +327,7 @@ class BaseSpider(object):
     def check_continue_spider(self, topic):
         """检测是否继续抓取
         """
-        # 到达预定的爬取时间，中断爬取
-        if arrow.get(topic["create_time"]) > self.stop_spider_time:
-            raise StopSpiderError("停止抓取")
+        pass
         
 
 
@@ -335,14 +337,74 @@ class FullSpider(BaseSpider):
     def check_continue_spider(self, topic):
         """检测是否继续抓取
         """
-        if arrow.get(topic["create_time"]) > self.stop_spider_time:
-            raise Exception("")
+        # 到达预定的爬取时间，中断爬取
+        if arrow.get(topic["create_time"]) < self.stop_spider_time:
+            raise StopSpiderError("停止抓取")
 
 class DailySpider(BaseSpider):
     """日常抓取
     """
-    def check_continue_spider(self, topic):
-        """检测是否继续抓取
+    def begin_spider(self):
+        """begin spider
         """
-        if arrow.get(topic["create_time"]) > self.stop_spider_time:
-            raise Exception("")
+        if not group_id:
+            raise NotGroupId("缺少group_id")
+        while 1:
+            topic_list = self.get_topic_list(self.group_id)
+            if not topic_list:
+                # 休眠30分钟
+                time.sleep(60*30)
+            # 遍历检查topic_list，获取增量topic
+            new_topic_list = self.get_increment_topic_list(topic_list)
+            if not topic_list:
+                # 休眠30分钟
+                time.sleep(60*30)
+
+            self.topics.extend(new_topic_list)
+
+            for topic in topi_list:
+                if topic["comments_count"] > len(topic["show_comments"]):
+                    self.comments.extend(self.get_comment_list(topic))
+                else:
+                    self.comments.extend(topic["show_comments"])
+
+            # 每1000条保存一次，防止数据过多崩溃
+            if len(self.topics) % 1000 == 0:
+                self.cache_topics()
+            
+            self.pre_spider_time = new_topic_list[-1]["create_time"]
+            
+            time.sleep(2)
+
+
+    def cache_params(self):
+        """cache cookie"""
+
+        file_path = "data/daily_params.json"
+
+        data = {
+            "pre_end_time": self.pre_end_time,
+            "group_id": self.group_id
+        }
+
+        with open(file_path, "wb") as fd:
+            fd.write(json.dumps(data))
+
+    def get_cache_params(self):
+        """cache cookie"""
+
+        file_path = "data/daily_params.json"
+        if not os.path.exists(file_path):
+            return {}
+
+        with open(file_path, "rb") as fd:
+            return json.loads(fd.read())
+
+    def get_increment_topic_list(self, topic_list):
+        """获取增量topic
+        """
+        new_topic_list = []
+        for topic in topi_list:
+            if arrow.get(topic["create_time"]) > self.pre_end_time::
+                new_topic_list.append(topic)
+        return new_topic_list
