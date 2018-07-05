@@ -248,10 +248,6 @@ class BaseSpider(object):
                 continue
 
 
-        
-
-
-        
     def cache_token(self):
         """cache cookie"""
         if not self.token:
@@ -323,8 +319,8 @@ class BaseSpider(object):
         if not os.path.exists(directory):
             os.makedirs(directory)
 
-        begin_time = arrow.get(self.topics[0]["create_time"]).format("YYYYMMDDHHmm")
-        end_time = arrow.get(self.topics[-1]["create_time"]).format("YYYYMMDDHHmm")
+        begin_time = arrow.get(self.topics[0]["create_time"]).format("YYYY-MM-DD-HHmm")
+        end_time = arrow.get(self.topics[-1]["create_time"]).format("YYYY-MM-DD-HHmm")
         file_path = "{}/{}_{}.txt".format(directory, begin_time, end_time)
         if os.path.exists(file_path):
             file_path = "{}/{}_{}_{}.txt".format(
