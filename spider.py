@@ -43,7 +43,7 @@ class BaseSpider(object):
         self.session = requests.session()
         # 知识星球对User-Agent限制比较严格，估计对比了chrome具体版本, headers中的agent要写标准
         self.headers = {
-            'User-Agent' : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36'
+            'User-Agent' : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36'
         }
         self.token = ""
         self.topics = []
@@ -175,15 +175,16 @@ class BaseSpider(object):
         params = {}
         #url = "https://api.zsxq.com/v1.8/groups/{}/topics?count=20".format(group_id)
         url = "https://api.zsxq.com/v1.10/groups/285821581/topics?count=20".format(group_id)
+
         if end_time:
             params = {"end_time": end_time}
         headers = self.headers.copy()
-        headers["x-version"] = "1.8.5"
+        headers["X-Version"] = "1.10.0"
         headers["Accept"] = "*/*"
         headers["Connection"] = "keep-alive" 
         headers["Origin"] = "https://wx.zsxq.com"
-        headers["authorization"] = self.token.encode("utf-8")
-        headers["x-request-id"] = "bf192599-f8b6-c839-c629-dea24c41{}".format(random.randint(1000,1999))
+        headers["Authorization"] = self.token.encode("utf-8")
+        headers["X-Request-Id"] = "bf192599-f8b6-c839-c629-dea24c41{}".format(random.randint(1000,1999))
         headers["Referer"] = "https://wx.zsxq.com/dweb/"
         headers["Accept-Encoding"] = "gzip, deflate, br"
         headers["Accept-Language"] = "zh-CN,zh;q=0.9,en;q=0.8"
@@ -457,7 +458,7 @@ class DailySpider(BaseSpider):
         """
         check_time = self.pre_end_time
         new_topic_list = []
-        for topic in topi_list:
+        for topic in topic_list:
             if arrow.get(topic["create_time"]) > self.check_time:
                 new_topic_list.append(topic)
         return new_topic_list
