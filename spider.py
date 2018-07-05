@@ -48,25 +48,30 @@ class BaseSpider(object):
         self.token = ""
         self.topics = []
         self.comments = []
-        self.pre_end_time = None    # topic列表(20条)中时间最早的topic create_time，取下20条topic的end_time参数
-        self.stop_spider_time= arrow.get("2018-01-22")      # 定义爬取最早的记录时间，防止无限获取
-        # 前一次爬取时间
+        self.base_data_path = "data"
+        self.pre_end_time = kwargs.get("pre_end_time")# topic列表(20条)中时间最早的topic create_time，取下20条topic的end_time参数
         # 停止爬取时间，防止无限获取
         self.stop_spider_time = kwargs.get("stop_spider_time")
         self.group_id  = kwargs.get("group_id")
-        self.base_data_path = "data"
+        if not self.group_id:
+            self.get_cache_params()
 
     def execute(self):
         """execute spider"""
         try:
             self.init_browser()
             self.login_and_init_token()
-            self.begin_spider()
+            while 1:
+                try:
+                    self.begin_spider()
+                except LoginTimeOut as error:
+                    self.delete_cache_token()
+                    self.login_and_init_token()
+
         except KeyboardInterrupt as error:
             pass
-        except Sleep as error:
-            raise error
         except Exception as error:
+            logging.error(str(error), exc_info=True)
             pass
         finally:
             self.cache_topics()
@@ -109,7 +114,7 @@ class BaseSpider(object):
     def begin_spider(self):
         """begin spider
         """
-        if not group_id:
+        if not self.group_id:
             raise NotGroupId("缺少group_id")
         while 1:
             topic_list = self.get_topic_list(self.group_id, self.pre_end_time)
@@ -127,16 +132,16 @@ class BaseSpider(object):
                 else:
                     self.comments.extend(topic["show_comments"])
 
+            self.pre_end_time = topic_list[-1]["create_time"]
+
             # 每1000条保存一次，防止数据过多崩溃
-            if len(self.topics) % 1000 == 0:
+            if len(self.topics) > 1000:
                 self.cache_topics()
-            
-            self.pre_spider_time = topic_list[-1]["create_time"]
             
             time.sleep(2)
 
 
-    def get_topics_list(self, group_id=None, end_time=None):
+    def get_topic_list(self, group_id=None, end_time=None):
         """获取topic_list
         topic = {
             topic_id: xx,
@@ -168,11 +173,12 @@ class BaseSpider(object):
         }
         """
         params = {}
-        url = "https://api.zsxq.com/v1.8/groups/{}/topics?count=20".format(group_id)
+        #url = "https://api.zsxq.com/v1.8/groups/{}/topics?count=20".format(group_id)
+        url = "https://api.zsxq.com/v1.10/groups/285821581/topics?count=20".format(group_id)
         if end_time:
             params = {"end_time": end_time}
         headers = self.headers.copy()
-        headers["x-version"] = "1.8.8"
+        headers["x-version"] = "1.8.5"
         headers["Accept"] = "*/*"
         headers["Connection"] = "keep-alive" 
         headers["Origin"] = "https://wx.zsxq.com"
@@ -181,8 +187,11 @@ class BaseSpider(object):
         headers["Referer"] = "https://wx.zsxq.com/dweb/"
         headers["Accept-Encoding"] = "gzip, deflate, br"
         headers["Accept-Language"] = "zh-CN,zh;q=0.9,en;q=0.8"
+
         # response = requests.get(url, headers=headers, proxies={"https": "127.0.0.1:8081"})
         response = requests.get(url, headers=headers, params=params)
+        import pdb
+        pdb.set_trace()
         result_json = response.json() 
         if not result_json["succeeded"]:
             raise LoginTimeOut("请重新登录")
@@ -239,17 +248,29 @@ class BaseSpider(object):
         """cache cookie"""
         if not self.token:
             return
-        with open("token.txt", "wb") as fd:
+        file_path = "{}/token.json".format(self.base_data_path)
+
+        with open(file_path, "wb") as fd:
             fd.write(json.dumps({"token": self.token}))
 
     def get_cache_token(self):
         """cache cookie"""
 
-        if not os.path.exists("token.txt"):
+        file_path = "{}/token.json".format(self.base_data_path)
+        if not os.path.exists(file_path):
             return
 
-        with open("token.txt", "rb") as fd:
+        with open(file_path, "rb") as fd:
             self.token = json.loads(fd.read())["token"]
+
+    def delete_cache_token(self):
+        """cache cookie"""
+
+        file_path = "{}/token.json".format(self.base_data_path)
+        if not os.path.exists(file_path):
+            return
+        self.token = None
+        os.remove(file_path)
 
     def cache_params(self):
         """cache cookie"""
@@ -273,7 +294,14 @@ class BaseSpider(object):
             return {}
 
         with open(file_path, "rb") as fd:
-            return json.loads(fd.read())
+            json_result = json.loads(fd.read())
+
+        self.pre_end_time = json_result["pre_end_time"]
+        self.group_id = json_result["group_id"]
+
+        if json_result.get("stop_spider_time"):
+            self.stop_spider_time = json_result.get("stop_spider_time")
+        
 
     def cache_topics(self):
         """cache topics
@@ -341,24 +369,53 @@ class FullSpider(BaseSpider):
         if arrow.get(topic["create_time"]) < self.stop_spider_time:
             raise StopSpiderError("停止抓取")
 
+    def cache_topics(self):
+        if not self.topics:
+            return
+        self.pre_end_time = self.topics[-1]["create_time"] 
+        super(DailySpider, self).cache_topics()
+
 class DailySpider(BaseSpider):
     """日常抓取
     """
+    def execute(self):
+        """execute spider"""
+        try:
+            self.init_browser()
+            self.login_and_init_token()
+            while 1:
+                try:
+                    self.begin_spider()
+                except Sleep as error:
+                    self.cache_topics()
+                    self.cache_topics()
+                    time.sleep(10)
+                except LoginTimeOut as error:
+                    self.delete_cache_token()
+                    self.login_and_init_token()
+
+        except KeyboardInterrupt as error:
+            pass
+        except Exception as error:
+            logging.error(str(error), exc_info=True)
+            pass
+        finally:
+            self.cache_topics()
+            self.cache_params()
+
     def begin_spider(self):
         """begin spider
         """
-        if not group_id:
+        if not self.group_id:
             raise NotGroupId("缺少group_id")
         while 1:
             topic_list = self.get_topic_list(self.group_id)
             if not topic_list:
-                # 休眠30分钟
-                time.sleep(60*30)
+                raise Sleep()
             # 遍历检查topic_list，获取增量topic
             new_topic_list = self.get_increment_topic_list(topic_list)
             if not topic_list:
-                # 休眠30分钟
-                time.sleep(60*30)
+                raise Sleep()
 
             self.topics.extend(new_topic_list)
 
@@ -368,15 +425,10 @@ class DailySpider(BaseSpider):
                 else:
                     self.comments.extend(topic["show_comments"])
 
-            # 每1000条保存一次，防止数据过多崩溃
-            if len(self.topics) % 1000 == 0:
-                self.cache_topics()
+            # 超过1000条保存一次，防止数据过多崩溃
+            if len(self.topics) > 10000:
+                raise Sleep("休息一会儿")
             
-            self.pre_spider_time = new_topic_list[-1]["create_time"]
-            
-            time.sleep(2)
-
-
     def cache_params(self):
         """cache cookie"""
 
@@ -403,8 +455,20 @@ class DailySpider(BaseSpider):
     def get_increment_topic_list(self, topic_list):
         """获取增量topic
         """
+        check_time = self.pre_end_time
         new_topic_list = []
         for topic in topi_list:
-            if arrow.get(topic["create_time"]) > self.pre_end_time::
+            if arrow.get(topic["create_time"]) > self.check_time:
                 new_topic_list.append(topic)
         return new_topic_list
+
+    def check_continue_spider(self, topic):
+        """检测是否继续抓取
+        """
+        pass
+
+    def cache_topics(self):
+        if not self.topics:
+            return
+        self.pre_end_time = self.topics[0]["create_time"] 
+        super(DailySpider, self).cache_topics()
