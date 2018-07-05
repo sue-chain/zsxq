@@ -126,7 +126,11 @@ class BaseSpider(object):
 
             self.topics.extend(topic_list)
 
-            for topic in topi_list:
+            for topic in topic_list:
+                if not topic["comments_count"]:
+                    continue
+                if not topic.get("show_comments"):
+                    continue
                 if topic["comments_count"] > len(topic["show_comments"]):
                     self.comments.extend(self.get_comment_list(topic))
                 else:
@@ -137,6 +141,7 @@ class BaseSpider(object):
             # 每1000条保存一次，防止数据过多崩溃
             if len(self.topics) > 1000:
                 self.cache_topics()
+                self.cache_params()
             
             time.sleep(2)
 
@@ -230,10 +235,12 @@ class BaseSpider(object):
         base_path = "{}/image".format(self.base_data_path)
         if not images:
             return
+        if not os.path.exists(base_path):
+            os.makedirs(base_path)
         for image in images:
             try:
-                image_file = "{}/{}".format(base_path, image["thumbnail"].split(".")[-1])
-                resp = requests.get("thumbnail")
+                image_file = "{}/{}".format(base_path, image["thumbnail"]["url"].split("/")[-1])
+                resp = requests.get(image["thumbnail"]["url"])
                 if resp.status_code == 200:
                     with open(image_file, "wb") as fd:
                         fd.write(resp.content)
@@ -312,15 +319,15 @@ class BaseSpider(object):
         if not self.topics:
             return
 
-        directory = "{}/{}".format(self.base_data_path, arrow.now().format("YYYY-MM"))
-        if os.path.exists(directory):
+        directory = "{}/{}/topic".format(self.base_data_path, arrow.now().format("YYYY-MM"))
+        if not os.path.exists(directory):
             os.makedirs(directory)
 
-        begin_time = arrow.get(self.topics[0]["crate_time"]).format("YYYYMMMDDHHmm")
-        end_time = arrow.get(self.topics[-1]["crate_time"]).format("YYYYMMMDDHHmm")
-        file_path = "{}/topic/{}_{}.txt".format(directory, begin_time, end_time)
+        begin_time = arrow.get(self.topics[0]["create_time"]).format("YYYYMMDDHHmm")
+        end_time = arrow.get(self.topics[-1]["create_time"]).format("YYYYMMDDHHmm")
+        file_path = "{}/{}_{}.txt".format(directory, begin_time, end_time)
         if os.path.exists(file_path):
-            file_path = "{}/topic/{}_{}_{}.txt".format(
+            file_path = "{}/{}_{}_{}.txt".format(
                 directory,
                 begin_time,
                 end_time,
@@ -338,11 +345,13 @@ class BaseSpider(object):
         if not self.comments:
             return
 
-        directory = "{}/{}".format(self.base_data_path, arrow.now().format("YYYY-MM"))
+        directory = "{}/{}/comment".format(self.base_data_path, arrow.now().format("YYYY-MM"))
+        if not os.path.exists(directory):
+            os.makedirs(directory)
 
-        file_path = "{}/comment/{}_{}.txt".format(directory, begin_time, end_time)
+        file_path = "{}/{}_{}.txt".format(directory, begin_time, end_time)
         if os.path.exists(file_path):
-            file_path = "{}/comment/{}_{}_{}.txt".format(
+            file_path = "{}/{}_{}_{}.txt".format(
                 directory,
                 begin_time,
                 end_time,
@@ -415,14 +424,20 @@ class DailySpider(BaseSpider):
                 raise Sleep()
             # 遍历检查topic_list，获取增量topic
             new_topic_list = self.get_increment_topic_list(topic_list)
-            if not topic_list:
+            if not new_topic_list:
                 raise Sleep()
 
             self.topics.extend(new_topic_list)
 
-            for topic in topi_list:
+            for topic in new_topic_list:
+                self.download_file(topic)
+                if not topic["comments_count"]:
+                    continue
+                if not topic.get("show_comments"):
+                    continue
                 if topic["comments_count"] > len(topic["show_comments"]):
-                    self.comments.extend(self.get_comment_list(topic))
+                    self.comments.extend(topic["show_comments"])
+                    #self.comments.extend(self.get_comment_list(topic))
                 else:
                     self.comments.extend(topic["show_comments"])
 
@@ -459,7 +474,7 @@ class DailySpider(BaseSpider):
         check_time = self.pre_end_time
         new_topic_list = []
         for topic in topic_list:
-            if arrow.get(topic["create_time"]) > self.check_time:
+            if arrow.get(topic["create_time"]) > arrow.get(check_time):
                 new_topic_list.append(topic)
         return new_topic_list
 
