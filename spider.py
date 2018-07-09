@@ -53,8 +53,7 @@ class BaseSpider(object):
         # 停止爬取时间，防止无限获取
         self.stop_spider_time = kwargs.get("stop_spider_time")
         self.group_id  = kwargs.get("group_id")
-        if not self.group_id:
-            self.get_cache_params()
+
 
     def execute(self):
         """execute spider"""
@@ -71,8 +70,8 @@ class BaseSpider(object):
         except KeyboardInterrupt as error:
             pass
         except Exception as error:
-            logging.error(str(error), exc_info=True)
-            pass
+            #logging.error(str(error), exc_info=True)
+            logging.error(str(error))
         finally:
             self.cache_topics()
             self.cache_params()
@@ -127,6 +126,7 @@ class BaseSpider(object):
             self.topics.extend(topic_list)
 
             for topic in topic_list:
+                self.download_file(topic)
                 if not topic["comments_count"]:
                     continue
                 if not topic.get("show_comments"):
@@ -136,14 +136,14 @@ class BaseSpider(object):
                 else:
                     self.comments.extend(topic["show_comments"])
 
-            self.pre_end_time = topic_list[-1]["create_time"]
+            self.pre_end_time = self.topics[-1]["create_time"] 
 
             # 每1000条保存一次，防止数据过多崩溃
             if len(self.topics) > 1000:
                 self.cache_topics()
                 self.cache_params()
             
-            time.sleep(2)
+            time.sleep(5)
 
 
     def get_topic_list(self, group_id=None, end_time=None):
@@ -180,6 +180,7 @@ class BaseSpider(object):
         params = {}
         #url = "https://api.zsxq.com/v1.8/groups/{}/topics?count=20".format(group_id)
         url = "https://api.zsxq.com/v1.10/groups/285821581/topics?count=20".format(group_id)
+        print "get topic {}&{}".format(url, end_time or "")
 
         if end_time:
             params = {"end_time": end_time}
@@ -196,8 +197,6 @@ class BaseSpider(object):
 
         # response = requests.get(url, headers=headers, proxies={"https": "127.0.0.1:8081"})
         response = requests.get(url, headers=headers, params=params)
-        import pdb
-        pdb.set_trace()
         result_json = response.json() 
         if not result_json["succeeded"]:
             raise LoginTimeOut("请重新登录")
@@ -209,8 +208,8 @@ class BaseSpider(object):
         params = {}
         topic_id = topic.get("topic_id")
         url = "https://api.zsxq.com/v1.8/topics/{}/comments?count=30&sort=asc".format(topic_id)
-        if begin_time:
-            params = {"begin_time": begin_time}
+        print "get comment {}".format(url)
+
         headers = self.headers.copy()
         headers["x-version"] = "1.8.8"
         headers["Accept"] = "*/*"
@@ -232,7 +231,7 @@ class BaseSpider(object):
     def download_file(self, topic):
         """下载帖子中的文件"""
         images = topic.get("talk", {}).get("images", {})
-        base_path = "{}/image".format(self.base_data_path)
+        base_path = "{}/{}/{}/image".format(self.base_data_path, self.group_id, arrow.now().format("YYYY-MM"))
         if not images:
             return
         if not os.path.exists(base_path):
@@ -240,6 +239,7 @@ class BaseSpider(object):
         for image in images:
             try:
                 image_file = "{}/{}".format(base_path, image["thumbnail"]["url"].split("/")[-1])
+                print "get image {}".format(image["thumbnail"]["url"])
                 resp = requests.get(image["thumbnail"]["url"])
                 if resp.status_code == 200:
                     with open(image_file, "wb") as fd:
@@ -298,14 +298,8 @@ class BaseSpider(object):
             return {}
 
         with open(file_path, "rb") as fd:
-            json_result = json.loads(fd.read())
+            return json.loads(fd.read())
 
-        self.pre_end_time = json_result["pre_end_time"]
-        self.group_id = json_result["group_id"]
-
-        if json_result.get("stop_spider_time"):
-            self.stop_spider_time = json_result.get("stop_spider_time")
-        
 
     def cache_topics(self):
         """cache topics
@@ -315,7 +309,7 @@ class BaseSpider(object):
         if not self.topics:
             return
 
-        directory = "{}/{}/topic".format(self.base_data_path, arrow.now().format("YYYY-MM"))
+        directory = "{}/{}/{}/topic".format(self.base_data_path, self.group_id, arrow.now().format("YYYY-MM"))
         if not os.path.exists(directory):
             os.makedirs(directory)
 
@@ -341,7 +335,7 @@ class BaseSpider(object):
         if not self.comments:
             return
 
-        directory = "{}/{}/comment".format(self.base_data_path, arrow.now().format("YYYY-MM"))
+        directory = "{}/{}/{}/comment".format(self.base_data_path, self.group_id, arrow.now().format("YYYY-MM"))
         if not os.path.exists(directory):
             os.makedirs(directory)
 
@@ -372,14 +366,14 @@ class FullSpider(BaseSpider):
         """检测是否继续抓取
         """
         # 到达预定的爬取时间，中断爬取
-        if arrow.get(topic["create_time"]) < self.stop_spider_time:
-            raise StopSpiderError("停止抓取")
+        if arrow.get(topic["create_time"]) < arrow.get(self.stop_spider_time):
+            raise StopSpiderError("到达设定的停止爬取日期，停止抓取")
 
     def cache_topics(self):
         if not self.topics:
             return
         self.pre_end_time = self.topics[-1]["create_time"] 
-        super(DailySpider, self).cache_topics()
+        super(FullSpider, self).cache_topics()
 
 class DailySpider(BaseSpider):
     """日常抓取
@@ -395,7 +389,7 @@ class DailySpider(BaseSpider):
                 except Sleep as error:
                     self.cache_topics()
                     self.cache_topics()
-                    time.sleep(10)
+                    time.sleep(60 * 30)
                 except LoginTimeOut as error:
                     self.delete_cache_token()
                     self.login_and_init_token()
@@ -403,8 +397,8 @@ class DailySpider(BaseSpider):
         except KeyboardInterrupt as error:
             pass
         except Exception as error:
-            logging.error(str(error), exc_info=True)
-            pass
+            #logging.error(str(error), exc_info=True)
+            logging.error(str(error))
         finally:
             self.cache_topics()
             self.cache_params()
@@ -432,8 +426,7 @@ class DailySpider(BaseSpider):
                 if not topic.get("show_comments"):
                     continue
                 if topic["comments_count"] > len(topic["show_comments"]):
-                    self.comments.extend(topic["show_comments"])
-                    #self.comments.extend(self.get_comment_list(topic))
+                    self.comments.extend(self.get_comment_list(topic))
                 else:
                     self.comments.extend(topic["show_comments"])
 
