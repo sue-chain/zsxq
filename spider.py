@@ -1,4 +1,4 @@
-#-*- coding:utf-8 -*-
+#1-*- coding:utf-8 -*-
 
 import os
 import time
@@ -179,7 +179,7 @@ class BaseSpider(object):
         """
         params = {}
         #url = "https://api.zsxq.com/v1.8/groups/{}/topics?count=20".format(group_id)
-        url = "https://api.zsxq.com/v1.10/groups/285821581/topics?count=20".format(group_id)
+        url = "https://api.zsxq.com/v1.10/groups/{}/topics?count=20".format(group_id)
         print "get topic {}&{}".format(url, end_time or "")
 
         if end_time:
@@ -231,7 +231,7 @@ class BaseSpider(object):
     def download_file(self, topic):
         """下载帖子中的文件"""
         images = topic.get("talk", {}).get("images", {})
-        base_path = "{}/{}/{}/image".format(self.base_data_path, self.group_id, arrow.now().format("YYYY-MM"))
+        base_path = "{}/{}/image".format(self.base_data_path, arrow.now().format("YYYY-MM"))
         if not images:
             return
         if not os.path.exists(base_path):
@@ -309,7 +309,7 @@ class BaseSpider(object):
         if not self.topics:
             return
 
-        directory = "{}/{}/{}/topic".format(self.base_data_path, self.group_id, arrow.now().format("YYYY-MM"))
+        directory = "{}/{}/topic".format(self.base_data_path, arrow.now().format("YYYY-MM"))
         if not os.path.exists(directory):
             os.makedirs(directory)
 
@@ -335,7 +335,7 @@ class BaseSpider(object):
         if not self.comments:
             return
 
-        directory = "{}/{}/{}/comment".format(self.base_data_path, self.group_id, arrow.now().format("YYYY-MM"))
+        directory = "{}/{}/comment".format(self.base_data_path, arrow.now().format("YYYY-MM"))
         if not os.path.exists(directory):
             os.makedirs(directory)
 
